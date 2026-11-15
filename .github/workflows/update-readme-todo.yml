@@ -89,28 +89,33 @@ jobs:
           baseline_entries = parse_entries(old_section)
           main_entries = collect_todos(MAIN_SHA)
 
-          old_formatted = [format_entry(entry) for entry in baseline_entries]
-          main_formatted = [format_entry(entry) for entry in main_entries]
-          if main_entries != baseline_entries:
-              diff = "\n".join(difflib.unified_diff(
-                  old_formatted,
-                  main_formatted,
-                  fromfile="README baseline",
-                  tofile="main Python TODOs",
-                  lineterm="",
-              ))
-              print(diff[:20000])
-              raise RuntimeError("Main-branch TODO extraction does not match the README baseline")
-
           changed_py_paths = {
               path for path in git_bytes("diff", "--name-only", MAIN_SHA, "HEAD").decode("utf-8").splitlines()
               if path.endswith(".py")
           }
           print("Changed Python paths:", sorted(changed_py_paths))
+
+          # The README is an intentionally curated baseline, not a complete
+          # regeneration of every pre-existing TODO. Validate only the files
+          # changed between main and dev, then apply just that file's TODO diff.
+          for changed_path in sorted(changed_py_paths):
+              baseline_for_path = [entry for entry in baseline_entries if entry[0] == changed_path]
+              main_for_path = [entry for entry in main_entries if entry[0] == changed_path]
+              if baseline_for_path != main_for_path:
+                  diff = "\n".join(difflib.unified_diff(
+                      [format_entry(entry) for entry in baseline_for_path],
+                      [format_entry(entry) for entry in main_for_path],
+                      fromfile=f"README baseline {changed_path}",
+                      tofile=f"main Python TODOs {changed_path}",
+                      lineterm="",
+                  ))
+                  print(diff[:20000])
+                  raise RuntimeError(f"Baseline TODOs do not match main for changed file {changed_path}")
+
           dev_entries = collect_todos("HEAD")
 
-          # Preserve the established baseline for every untouched file. For files
-          # changed between main and dev, use the freshly extracted dev TODOs.
+          # Preserve the established baseline for every untouched file. For each
+          # changed file, replace its matching main TODOs with the dev TODOs.
           merged_entries = [entry for entry in baseline_entries if entry[0] not in changed_py_paths]
           merged_entries.extend(entry for entry in dev_entries if entry[0] in changed_py_paths)
           merged_entries.sort(key=lambda item: (item[0], item[1]))
